@@ -247,6 +247,52 @@ type EndpointConfig struct {
 	HeadersToPass []string `mapstructure:"input_headers"`
 	// OutputEncoding defines the encoding strategy to use for the endpoint responses
 	OutputEncoding string `mapstructure:"output_encoding"`
+	// RateLimit defines the rate limiting policy to apply to this endpoint
+	RateLimit *RateLimitConfig `mapstructure:"rate_limit"`
+}
+
+// Rate-limiting algorithms supported by the proxy rate limit middleware
+const (
+	// RateLimitAlgorithmTokenBucket is the token bucket algorithm: every key
+	// owns a bucket that is refilled at a constant rate up to its capacity
+	RateLimitAlgorithmTokenBucket = "token_bucket"
+	// RateLimitAlgorithmSlidingWindow is the sliding window algorithm: every
+	// key is allowed a fixed number of requests per sliding time window
+	RateLimitAlgorithmSlidingWindow = "sliding_window"
+)
+
+// Rate-limiting dimensions supported by the proxy rate limit middleware
+const (
+	// RateLimitDimensionEndpoint applies a single shared limit to all the
+	// requests hitting the endpoint or backend
+	RateLimitDimensionEndpoint = "endpoint"
+	// RateLimitDimensionIP applies the limit to every client IP independently
+	RateLimitDimensionIP = "ip"
+	// RateLimitDimensionAPIKey applies the limit to every API key read from
+	// a request header independently
+	RateLimitDimensionAPIKey = "apikey"
+)
+
+// RateLimitConfig defines the rate limiting policy to apply to an endpoint
+// or to a backend
+type RateLimitConfig struct {
+	// Enabled flags if the rate limiter should be applied
+	Enabled bool `mapstructure:"enabled"`
+	// Algorithm is the rate limiting algorithm to use: token_bucket or
+	// sliding_window. Defaults to token_bucket
+	Algorithm string `mapstructure:"algorithm"`
+	// Dimension is the criteria used to group the requests: endpoint, ip or
+	// apikey. Defaults to endpoint
+	Dimension string `mapstructure:"dimension"`
+	// Rate is the maximum sustained rate, in requests per second
+	Rate float64 `mapstructure:"rate"`
+	// Burst is the maximum number of requests allowed to exceed the rate for
+	// a short period of time (the token bucket capacity and the sliding
+	// window size)
+	Burst int `mapstructure:"burst"`
+	// APIKeyHeader is the name of the header holding the API key. It is only
+	// used when Dimension is apikey and defaults to X-Api-Key
+	APIKeyHeader string `mapstructure:"api_key_header"`
 }
 
 // Backend defines how lura should connect to the backend service (the API resource to consume)
@@ -303,6 +349,8 @@ type Backend struct {
 	// so logs and other instrumentation can output better info (thus, it is not loaded
 	// with `mapstructure` or `json` tags).
 	ParentEndpointMethod string `json:"-" mapstructure:"-"`
+	// RateLimit defines the rate limiting policy to apply to this backend
+	RateLimit *RateLimitConfig `mapstructure:"rate_limit"`
 }
 
 // Plugin contains the config required by the plugin module

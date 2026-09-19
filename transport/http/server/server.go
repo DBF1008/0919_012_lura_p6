@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,6 +46,13 @@ const (
 var (
 	// CompleteResponseHeaderName is the header to flag incomplete responses to the client
 	CompleteResponseHeaderName = "X-Krakend-Completed"
+	// RetryAfterHeaderName is the header returned along with the
+	// 429 Too Many Requests responses, so the clients know how long they
+	// should wait before retrying
+	RetryAfterHeaderName = "Retry-After"
+	// DefaultRetryAfter is the number of seconds set in the Retry-After
+	// header when a rate limited response does not define one
+	DefaultRetryAfter = 1
 	// HeadersToSend are the headers to pass from the router request to the proxy
 	HeadersToSend = []string{"Content-Type"}
 	// UserAgentHeaderValue is the value of the User-Agent header to add to the proxy request
@@ -58,6 +66,29 @@ var (
 	ErrPublicKey = errors.New("public key not defined")
 	loggerPrefix = "[SERVICE: HTTP Server]"
 )
+
+// RateLimitHandler wraps the received handler and ensures that every
+// 429 Too Many Requests response carries a Retry-After header. If the
+// wrapped handler already set the header (e.g. from the rate limit error
+// metadata), its value is preserved
+func RateLimitHandler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&rateLimitResponseWriter{ResponseWriter: w}, r)
+	})
+}
+
+// rateLimitResponseWriter is an http.ResponseWriter that detects rate
+// limited responses and sets the Retry-After header when it is missing
+type rateLimitResponseWriter struct {
+	http.ResponseWriter
+}
+
+func (w *rateLimitResponseWriter) WriteHeader(statusCode int) {
+	if statusCode == http.StatusTooManyRequests && w.Header().Get(RetryAfterHeaderName) == "" {
+		w.Header().Set(RetryAfterHeaderName, strconv.Itoa(DefaultRetryAfter))
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
 
 // InitHTTPDefaultTransport ensures the default HTTP transport is configured just once per execution
 func InitHTTPDefaultTransport(cfg config.ServiceConfig) {

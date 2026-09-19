@@ -70,6 +70,7 @@ func (pf defaultFactory) New(cfg *config.EndpointConfig) (p Proxy, err error) {
 
 	p = NewPluginMiddleware(pf.logger, cfg)(p)
 	p = NewStaticMiddleware(pf.logger, cfg)(p)
+	p = NewEndpointRateLimitMiddlewareWithLogger(pf.logger, cfg)(p)
 	return
 }
 
@@ -97,6 +98,9 @@ func (pf defaultFactory) newStack(backend *config.Backend) (p Proxy) {
 		p = NewConcurrentMiddlewareWithLogger(pf.logger, backend)(p)
 	}
 	p = NewRequestBuilderMiddlewareWithLogger(pf.logger, backend)(p)
+	// the rate limit decision must be made before the request is built and
+	// forwarded, so rejected requests never reach the backend:
+	p = NewRateLimitMiddlewareWithLogger(pf.logger, backend)(p)
 	// we need to filter the input query strings before the request is constructed
 	// so the query strings are properly added to the URL:
 	p = NewFilterQueryStringsMiddleware(pf.logger, backend)(p)
