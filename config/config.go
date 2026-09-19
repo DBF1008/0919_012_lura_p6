@@ -247,6 +247,10 @@ type EndpointConfig struct {
 	HeadersToPass []string `mapstructure:"input_headers"`
 	// OutputEncoding defines the encoding strategy to use for the endpoint responses
 	OutputEncoding string `mapstructure:"output_encoding"`
+	// RateLimit defines the rate limiting policy applied to the endpoint before
+	// any request is built or forwarded to its backends. A nil policy disables
+	// rate limiting for the endpoint.
+	RateLimit *RateLimitConfig `mapstructure:"rate_limit"`
 }
 
 // Backend defines how lura should connect to the backend service (the API resource to consume)
@@ -303,6 +307,92 @@ type Backend struct {
 	// so logs and other instrumentation can output better info (thus, it is not loaded
 	// with `mapstructure` or `json` tags).
 	ParentEndpointMethod string `json:"-" mapstructure:"-"`
+	// RateLimit defines the rate limiting policy applied to the backend just
+	// before its request is built. A nil policy disables rate limiting for the
+	// backend.
+	RateLimit *RateLimitConfig `mapstructure:"rate_limit"`
+}
+
+const (
+	// RateLimitAlgorithmTokenBucket is the token bucket rate limiting algorithm
+	RateLimitAlgorithmTokenBucket = "token_bucket"
+	// RateLimitAlgorithmSlidingWindow is the sliding window rate limiting algorithm
+	RateLimitAlgorithmSlidingWindow = "sliding_window"
+
+	// RateLimitStrategyEndpoint limits every request hitting the same endpoint
+	// (or backend) sharing one single bucket.
+	RateLimitStrategyEndpoint = "endpoint"
+	// RateLimitStrategyIP keeps one bucket per client IP address.
+	RateLimitStrategyIP = "ip"
+	// RateLimitStrategyAPIKey keeps one bucket per API key extracted from a header.
+	RateLimitStrategyAPIKey = "api_key"
+
+	// RateLimitStoreMemory keeps the rate limiting state in the local process,
+	// so each instance enforces its own counters.
+	RateLimitStoreMemory = "memory"
+	// RateLimitStoreRedis keeps the rate limiting state in a Redis instance,
+	// sharing counters across all the gateway instances.
+	RateLimitStoreRedis = "redis"
+
+	// DefaultRateLimitAPIKeyHeader is the header inspected when the strategy is
+	// RateLimitStrategyAPIKey and no custom header is configured.
+	DefaultRateLimitAPIKeyHeader = "X-API-Key"
+)
+
+// RateLimitConfig defines a rate limiting policy. Rate is the steady number of
+// permits granted per second and Burst is the maximum number of permits that can
+// be consumed in a single instant (the bucket capacity). When the sliding window
+// algorithm is used, Rate is converted into the number of permits allowed inside
+// the configured Window.
+type RateLimitConfig struct {
+	// Algorithm is RateLimitAlgorithmTokenBucket or RateLimitAlgorithmSlidingWindow
+	Algorithm string `mapstructure:"algorithm" json:"algorithm"`
+	// Strategy selects the key dimension: RateLimitStrategyEndpoint,
+	// RateLimitStrategyIP or RateLimitStrategyAPIKey
+	Strategy string `mapstructure:"strategy" json:"strategy"`
+	// Rate is the number of permits granted per second
+	Rate float64 `mapstructure:"rate" json:"rate"`
+	// Burst is the maximum burst capacity (token bucket capacity). When zero it
+	// defaults to Rate (or 1 when Rate is lower than 1).
+	Burst int `mapstructure:"burst" json:"burst"`
+	// Window is the size of the sliding window. It is only used by the sliding
+	// window algorithm and defaults to one second.
+	Window time.Duration `mapstructure:"window" json:"window"`
+	// APIKeyHeader is the header holding the API key. Defaults to
+	// DefaultRateLimitAPIKeyHeader.
+	APIKeyHeader string `mapstructure:"api_key_header" json:"api_key_header"`
+	// Store configures the shared storage backend. Defaults to the in-memory
+	// store.
+	Store RateLimitStoreConfig `mapstructure:"store" json:"store"`
+}
+
+// RateLimitStoreConfig configures the backend storing the rate limiting state,
+// enabling shared counters in distributed deployments.
+type RateLimitStoreConfig struct {
+	// Type is RateLimitStoreMemory or RateLimitStoreRedis
+	Type string `mapstructure:"type" json:"type"`
+	// Address is the host:port of the Redis server (redis store only)
+	Address string `mapstructure:"address" json:"address"`
+	// Password is the AUTH credential of the Redis server (optional)
+	Password string `mapstructure:"password" json:"password"`
+	// DB is the Redis logical database to select (optional)
+	DB int `mapstructure:"db" json:"db"`
+	// DialTimeout caps the connection establishment time. Defaults to 100ms.
+	DialTimeout time.Duration `mapstructure:"dial_timeout" json:"dial_timeout"`
+	// ReadTimeout caps every command round trip. Defaults to 100ms.
+	ReadTimeout time.Duration `mapstructure:"read_timeout" json:"read_timeout"`
+	// KeyPrefix namespaces every key handled by this gateway. Defaults to "lura:ratelimit".
+	KeyPrefix string `mapstructure:"key_prefix" json:"key_prefix"`
+	// PoolSize is the number of TCP connections kept open against Redis. Defaults to 5.
+	PoolSize int `mapstructure:"pool_size" json:"pool_size"`
+	// FailOpen decides what to do when the store is unavailable: true lets the
+	// request proceed, false rejects it with a 429 response. Defaults to true.
+	FailOpen *bool `mapstructure:"fail_open" json:"fail_open"`
+}
+
+// Enabled reports whether the policy is configured with a positive refill rate.
+func (rl *RateLimitConfig) Enabled() bool {
+	return rl != nil && rl.Rate > 0
 }
 
 // Plugin contains the config required by the plugin module

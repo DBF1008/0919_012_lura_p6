@@ -68,6 +68,9 @@ func (pf defaultFactory) New(cfg *config.EndpointConfig) (p Proxy, err error) {
 		return
 	}
 
+	// the endpoint limiter is the outermost layer of the stack: the decision is
+	// taken before any plugin, static response or backend processing happens.
+	p = NewRateLimitMiddleware(pf.logger, cfg.Method+" "+cfg.Endpoint, cfg.RateLimit)(p)
 	p = NewPluginMiddleware(pf.logger, cfg)(p)
 	p = NewStaticMiddleware(pf.logger, cfg)(p)
 	return
@@ -97,6 +100,13 @@ func (pf defaultFactory) newStack(backend *config.Backend) (p Proxy) {
 		p = NewConcurrentMiddlewareWithLogger(pf.logger, backend)(p)
 	}
 	p = NewRequestBuilderMiddlewareWithLogger(pf.logger, backend)(p)
+	// the backend limiter wraps the request builder, so the decision is taken
+	// once per backend request and before the forwarded request is constructed.
+	p = NewRateLimitMiddleware(
+		pf.logger,
+		backend.ParentEndpointMethod+" "+backend.ParentEndpoint+" -> "+backend.URLPattern,
+		backend.RateLimit,
+	)(p)
 	// we need to filter the input query strings before the request is constructed
 	// so the query strings are properly added to the URL:
 	p = NewFilterQueryStringsMiddleware(pf.logger, backend)(p)

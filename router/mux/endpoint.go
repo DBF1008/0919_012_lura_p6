@@ -81,7 +81,9 @@ func CustomEndpointHandlerWithHTTPError(rb RequestBuilder, errF server.ToHTTPErr
 			} else {
 				w.Header().Set(server.CompleteResponseHeaderName, server.HeaderIncompleteResponseValue)
 				if err != nil {
-					if t, ok := err.(responseError); ok {
+					if server.WriteRateLimitError(w, err) {
+						// response already written with 429 + Retry-After
+					} else if t, ok := err.(responseError); ok {
 						http.Error(w, err.Error(), t.StatusCode())
 					} else {
 						http.Error(w, err.Error(), errF(err))

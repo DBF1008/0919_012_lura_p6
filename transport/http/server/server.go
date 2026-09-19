@@ -33,6 +33,32 @@ func DefaultToHTTPError(_ error) int {
 	return http.StatusInternalServerError
 }
 
+// RateLimitedError is implemented by errors caused by a rate limiter
+// rejection. The transport layer uses it to write a 429 response carrying a
+// Retry-After header.
+type RateLimitedError interface {
+	error
+	StatusCode() int
+	RetryAfterSeconds() int
+}
+
+// WriteRateLimitError writes a 429 Too Many Requests response for errors
+// implementing the RateLimitedError interface, setting the Retry-After header
+// to the suggested delay in seconds. It reports whether the error was handled.
+func WriteRateLimitError(w http.ResponseWriter, err error) bool {
+	var rle RateLimitedError
+	if !errors.As(err, &rle) || rle.StatusCode() != http.StatusTooManyRequests {
+		return false
+	}
+	retryAfter := rle.RetryAfterSeconds()
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+	http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+	return true
+}
+
 const (
 	// HeaderCompleteResponseValue is the value of the CompleteResponseHeader
 	// if the response is complete
